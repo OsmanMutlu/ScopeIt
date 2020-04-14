@@ -1,0 +1,53 @@
+Pipeline current model
+================================================== 
+Test set
+              precision    recall  f1-score   support
+   macro avg     0.8400    0.8908    0.8614      3804
+================================================== 
+Pipeline
+              precision    recall  f1-score   support
+   macro avg     0.8771    0.9057    0.8890       831
+
+
+BERT uncased Baseline
+================================================== 
+Test set
+              precision    recall  f1-score   support
+   macro avg     0.8535    0.8873    0.8687      3804
+================================================== 
+Pipeline
+              precision    recall  f1-score   support
+   macro avg     0.8826    0.8980    0.8897       831
+
+
+BERT-CNN uncased Baseline
+================================================== 
+Test set
+              precision    recall  f1-score   support
+   macro avg     0.8325    0.8919    0.8565      3804
+================================================== 
+Pipeline
+              precision    recall  f1-score   support
+   macro avg     0.8715    0.8932    0.8809       831
+
+
+ScopeIt (layer=1, h=512) / bert-uncased (no fine-tuning)
+================================================== 
+Test set
+              precision    recall  f1-score   support
+   macro avg     0.8319    0.8797    0.8521      3739
+================================================== 
+Pipeline
+              precision    recall  f1-score   support
+   macro avg     0.8818    0.9004    0.8902       831
+
+
+ScopeIt (layer=2, h=512) / bert-uncased (with fine-tuning)
+================================================== 
+Test set
+              precision    recall  f1-score   support
+   macro avg     0.8440    0.8832    0.8613      3804
+================================================== 
+Pipeline
+              precision    recall  f1-score   support
+   macro avg     0.8715    0.8864    0.8784       831

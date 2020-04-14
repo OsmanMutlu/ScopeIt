@@ -87,12 +87,12 @@ def build_scopeit(x_train, x_dev, y_train, y_dev, pretrained_model, n_epochs=10,
         bert = nn.DataParallel(bert, device_ids=device_ids[1:])
     bert.to(bert_device)
 
-    model.load_state_dict(torch.load("scopeit_" + model_path))
-    model.to(model_device)
-    model.predict = predict.__get__(model)
-    bert.load_state_dict(torch.load("bert_" + model_path))
+    # model.load_state_dict(torch.load("scopeit_" + model_path))
+    # model.to(model_device)
+    # model.predict = predict.__get__(model)
+    # bert.load_state_dict(torch.load("bert_" + model_path))
 
-    return bert, model
+    # return bert, model
 
     np.random.seed(seed)
     torch.manual_seed(seed)

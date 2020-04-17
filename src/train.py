@@ -5,27 +5,20 @@ from src.model import ScopeIt
 from src.data import group_set, read_file
 import numpy as np
 import time
-import datetime
 import torch
 import random
-import json
-import os
-import sys
-import unicodedata
-import re
 
 use_gpu = True
 seed = 1234
-max_length = 128
-fine_tune_bert = True
-num_layers = 2
+max_length = 128 # max length of a sentence
+fine_tune_bert = True # set False to use bert only as embedder
+num_layers = 2  # GRU num of layer
 hidden_size = 512 # size of GRU hidden layer (in the paper they use 128)
-batch_size = 300
+batch_size = 300 # max sentence number in documents 
 lr = 1e-4 # 1e-4 -> in the paper
 tokenizer = None
 
 device_ids = [0, 1, 2, 3, 4, 5, 6, 7] if fine_tune_bert else [0, 1, 2, 3, 4]
-
 if use_gpu and torch.cuda.is_available():
     bert_device = torch.device("cuda:%d"%(device_ids[1]))
 else:
@@ -186,7 +179,7 @@ def build_scopeit(x_train, x_dev, y_train, y_dev, pretrained_model, n_epochs=10,
         val_score = f1_score(dev_labels, [ int(x >= 0.5) for x in val_preds], average="macro")
         # val_score = recall_score(dev_labels, [ int(x >= 0.5) for x in val_preds])
         print(classification_report(dev_labels, [ int(x >= 0.5) for x in val_preds], digits=4))
-        print("Epoch %d - Train loss: %.4f. Validation Recall: %.4f  Validation loss: %.4f. Elapsed time: %.2fs."% (epoch + 1, train_loss, val_score, val_loss, elapsed))
+        print("Epoch %d - Train loss: %.4f. Validation Score: %.4f  Validation loss: %.4f. Elapsed time: %.2fs."% (epoch + 1, train_loss, val_score, val_loss, elapsed))
         if val_score > best_score:
             print("Saving model!")
             torch.save(model.state_dict(), "scopeit_" + model_path)
@@ -207,7 +200,7 @@ def evaluate_sentences(filename):
     test = read_file(filename)
     x_test, y_test = group_set(test, batch_size, doc=False)
     preds = model.predict(bert, x_test)
-    print("="*50, "\n", filename ," set")
+    print("="*50, "\n", filename ,"set")
     test_labels = sum(y_test, [])
     print(classification_report(test_labels, [ int(x >= 0.5) for x in preds], digits=4))
 
@@ -217,18 +210,18 @@ if __name__ == '__main__':
     train = read_file("data/corpus_sent_data/train.json")
     dev = read_file("data/corpus_sent_data/dev.json")
     
-    # add negative docs
+    # add negative docs (necessary only for document level classification)
     train += read_file("data/neg_docs/neg_doc_train.json")
     dev += read_file("data/neg_docs/neg_doc_dev.json")
     ##
 
     # group sentences into documents and sort them 
     print("max batch size (max sentences in doc): ", batch_size)
-    x_train, y_train = group_set(train, batch_size)
+    x_train, y_train = group_set(train, batch_size) # add doc=False to prevent adding doc label as the last label of each batch
     x_dev, y_dev = group_set(dev, batch_size)
     
-    # bert, model = build_scopeit(x_train, x_dev, y_train, y_dev, "bert-base-uncased", n_epochs=5, model_path="bert-base-uncased.pt")
-    bert, model = build_scopeit(x_train[:10], x_dev[:10], y_train[:10], y_dev[:10], "bert-base-uncased", n_epochs=5, model_path="bert-base-uncased.pt")
+    bert, model = build_scopeit(x_train, x_dev, y_train, y_dev, "bert-base-uncased", n_epochs=8, model_path="bert-base-uncased.pt")
+    # bert, model = build_scopeit(x_train[:10], x_dev[:10], y_train[:10], y_dev[:10], "bert-base-uncased", n_epochs=5, model_path="bert-base-uncased.pt")
 
     print("="*50, "\nSentence evaluation")
     evaluate_sentences("data/corpus_sent_data/test.json")
@@ -236,10 +229,9 @@ if __name__ == '__main__':
     evaluate_sentences("data/neg_docs/neg_doc_test.json")
 
     print("="*50, "\nDocument evaluation\n", "="*50, "\nPipeline")
-    pipeline = read_file("data/pipeline.json")
-    pipeline += read_file("data/npipeline.json")
+    pipeline = read_file("data/corpus_sent_data/pipeline.json")
+    pipeline += read_file("data/neg_docs/neg_doc_pipeline.json")
     x_pipeline, y_pipeline = group_set(pipeline, batch_size)
     preds = model.predict(bert, x_pipeline, return_only_doc=True)
-    pipeline_labels = [ s[-1] for s in y_pipeline ]
+    pipeline_labels = [ s[-1] for s in y_pipeline ] # get only doc label
     print(classification_report(pipeline_labels, [ int(x >= 0.5) for x in preds], digits=4))
-

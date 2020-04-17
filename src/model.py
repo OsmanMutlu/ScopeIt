@@ -40,7 +40,7 @@ class ScopeIt(nn.Module):
         sent_logits = self.sent_linear(boomed_sents).squeeze(0)
         doc_logit = self.doc_linear(boomed_doc)
 
-        return torch.cat((sent_logits, doc_logit))
+        return torch.cat((sent_logits, doc_logit)) # the last label is always doc label
 
 
 class Boom(nn.Module):
@@ -51,7 +51,7 @@ class Boom(nn.Module):
         if not shortcut:
             self.linear2 = nn.Linear(dim_feedforward, d_model)
         self.shortcut = shortcut
-        self.act = nn.GeLU()
+        self.act = nn.GELU()
         #self.act = nn.Tanh()
 
     def forward(self, input):
@@ -64,7 +64,6 @@ class Boom(nn.Module):
             # Divide the hidden size evenly into chunks
             x = x.view(*x.shape[:-1], x.shape[-1] // ninp, ninp)
             # Collapse the chunks through summation
-            #h = h + self.drop(x).sum(dim=-2)
             z = x.sum(dim=-2)
         else:
             z = self.linear2(x)

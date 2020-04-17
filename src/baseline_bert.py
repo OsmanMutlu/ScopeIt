@@ -184,10 +184,10 @@ def build_bert(x_train, x_dev, y_train, y_dev, pretrained_model, n_epochs=10, mo
 
 if __name__ == '__main__':
     from .data import read_file
-    train = read_file("data/train.json")
-    dev = read_file("data/dev.json")
-    test = read_file("data/test.json")
-    pipeline = read_file("data/pipeline.json")
+    train = read_file("data/corpus_sent_data/train.json")
+    dev = read_file("data/corpus_sent_data/dev.json")
+    test = read_file("data/corpus_sent_data/test.json")
+    pipeline = read_file("data/corpus_sent_data/pipeline.json")
     x_train, y_train = [ x["sentence"] for x in train ], [ x["label"] for x in train ]
     x_dev, y_dev = [ x["sentence"] for x in dev ], [ x["label"] for x in dev ]
     x_test, y_test = [ x["sentence"] for x in test ], [ x["label"] for x in test ]

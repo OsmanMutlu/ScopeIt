@@ -6,7 +6,7 @@ def read_file(file_name):
 
     return docs
 
-def group_set(_set, batch_size=32):
+def group_set(_set, batch_size=32, doc=True):
     groups, labels = [], []
     urls = set(x["url"] for x in _set)
     for u in urls:
@@ -14,5 +14,9 @@ def group_set(_set, batch_size=32):
         sents = sorted(sents, key=lambda x: x["sent_num"])
         groups.append([x["sentence"] for x in sents ])
         labels.append([ x["label"] for x in sents ])
+
+        # doc label
+        if doc:
+            labels[-1].append(int(1 in labels[-1]))
 
     return groups, labels

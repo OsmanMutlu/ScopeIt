@@ -152,10 +152,10 @@ if __name__ == "__main__":
     pretrained_model = "bert-base-uncased"
     tokenizer = BertTokenizer.from_pretrained(pretrained_model)
     
-    train = read_file("data/train.json")
-    dev = read_file("data/dev.json")
-    test = read_file("data/test.json")
-    pipeline = read_file("data/pipeline.json")
+    train = read_file("data/corpus_sent_data/train.json")
+    dev = read_file("data/corpus_sent_data/dev.json")
+    test = read_file("data/corpus_sent_data/test.json")
+    pipeline = read_file("data/corpus_sent_data/pipeline.json")
     
     x_train, y_train = [ x["sentence"] for x in train ], [ x["label"] for x in train ]
     x_dev, y_dev = [ x["sentence"] for x in dev ], [ x["label"] for x in dev ]

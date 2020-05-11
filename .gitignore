@@ -140,3 +140,8 @@ data/
 
 # torch models
 *.pt
+
+*~
+data/
+models/
+logs/

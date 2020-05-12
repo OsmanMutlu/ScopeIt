@@ -18,7 +18,7 @@ max_length = 128 # max length of a sentence
 fine_tune_bert = True # set False to use bert only as embedder
 num_layers = 2  # GRU num of layer
 hidden_size = 512 # size of GRU hidden layer (in the paper they use 128)
-batch_size = 300 # max sentence number in documents
+batch_size = 200 # max sentence number in documents
 lr = 1e-4 # 1e-4 -> in the paper
 tokenizer = None
 is_pretokenized = True # True when training with token level data
@@ -63,11 +63,14 @@ def prepare_set(texts, max_length=max_length):
 
     return t["input_ids"], t["attention_mask"], t["token_type_ids"]
 
-def prepare_labels(json_data, max_length=max_length, only_token=False):
+def prepare_labels(json_data, max_length=max_length, only_token=False, truncate=False):
 
     # No problem occurs if sent_labels or token_labels are empty in case they are not available when training.
     # When in validation sent_labels and token_labels must not be empty !!!
     token_labels = json_data["token_labels"]
+
+    if truncate:
+        token_labels = token_labels[:batch_size]
 
     # Token labels
     for i in range(len(token_labels)):
@@ -86,6 +89,9 @@ def prepare_labels(json_data, max_length=max_length, only_token=False):
         return token_labels
 
     sent_labels = json_data["sent_labels"]
+    if truncate:
+        sent_labels = sent_labels[:batch_size]
+
     doc_label = torch.FloatTensor([json_data["doc_label"]])
     sent_labels = torch.FloatTensor(sent_labels)
 
@@ -203,8 +209,13 @@ def build_scopeit(train_data, dev_data, pretrained_model, n_epochs=10, model_pat
     sent_avail = []
     token_avail = []
     for d in train_data:
-        x_train.append(prepare_set(d["tokens"]))
-        y_train.append(prepare_labels(d))
+        if len(d["tokens"]) > batch_size:
+            x_train.append(prepare_set(d["tokens"][:batch_size]))
+            y_train.append(prepare_labels(d, truncate=True))
+        else:
+            x_train.append(prepare_set(d["tokens"]))
+            y_train.append(prepare_labels(d, truncate=False))
+
         if not generate_labels_for_neg_docs:
             sent_avail.append(d["sent"])
             token_avail.append(d["token"])
@@ -216,13 +227,13 @@ def build_scopeit(train_data, dev_data, pretrained_model, n_epochs=10, model_pat
         y_dev.append(prepare_labels(d))
 
     model = ScopeIt(bert, hidden_size, num_layers=num_layers, num_token_labels=num_token_labels)
-    # model.load_state_dict(torch.load(repo_path + "/models/scopeit_" + model_path))
+    model.load_state_dict(torch.load(repo_path + "/models/scopeit_" + model_path))
     model.to(model_device)
 
     if torch.cuda.device_count() > 1 and bert_device.type == "cuda":
         bert = nn.DataParallel(bert, device_ids=device_ids[1:])
 
-    # bert.load_state_dict(torch.load(repo_path + "/models/bert_" + model_path))
+    bert.load_state_dict(torch.load(repo_path + "/models/bert_" + model_path))
     bert.to(bert_device)
 
     np.random.seed(seed)

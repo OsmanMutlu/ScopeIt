@@ -23,12 +23,14 @@ lr = 1e-4 # 1e-4 -> in the paper
 tokenizer = None
 is_pretokenized = True # True when training with token level data
 num_token_labels = 15
-# TODO : Implement this parameter
-generate_labels_for_neg_docs = True # A model parameter
+generate_labels_for_neg_docs = False
 repo_path = "/home/omutlu/ScopeIt"
-num_epochs = 15
+num_epochs = 10
 only_test = False
 predict = False
+
+device_ids = [0, 1, 2, 3, 4, 5, 6, 7] if fine_tune_bert else [0, 1, 2, 3, 4]
+# device_ids = [4, 5, 6, 7] if fine_tune_bert else [0, 1, 2, 3, 4]
 
 criterion = torch.nn.BCEWithLogitsLoss()
 token_criterion = torch.nn.CrossEntropyLoss(ignore_index=-1)
@@ -38,7 +40,6 @@ idtolabel = {}
 for i,lab in enumerate(label_list):
     idtolabel[i] = lab
 
-device_ids = [0, 1, 2, 3, 4, 5, 6, 7] if fine_tune_bert else [0, 1, 2, 3, 4]
 if use_gpu and torch.cuda.is_available():
     bert_device = torch.device("cuda:%d"%(device_ids[1]))
 else:
@@ -64,6 +65,8 @@ def prepare_set(texts, max_length=max_length):
 
 def prepare_labels(json_data, max_length=max_length, only_token=False):
 
+    # No problem occurs if sent_labels or token_labels are empty in case they are not available when training.
+    # When in validation sent_labels and token_labels must not be empty !!!
     token_labels = json_data["token_labels"]
 
     # Token labels
@@ -83,13 +86,13 @@ def prepare_labels(json_data, max_length=max_length, only_token=False):
         return token_labels
 
     sent_labels = json_data["sent_labels"]
-    doc_label = torch.FloatTensor([int(any(sent_labels))])
+    doc_label = torch.FloatTensor([json_data["doc_label"]])
     sent_labels = torch.FloatTensor(sent_labels)
 
     return token_labels, sent_labels, doc_label
 
 # Not used here. This can be used when predicting with no actual token label available
-def predict(bert, model, x_test, all_mock_token_labels, all_mock_org_token_labels=[]):
+def model_predict(bert, model, x_test, all_mock_token_labels, all_mock_org_token_labels=[]):
     # These mock_token_labels must be in the json data before fix_token_labels.py is applied. They can be all "O" labels with length the same as tokens before that script is applied.
     all_token_preds = []
     all_sent_preds = []
@@ -142,10 +145,11 @@ def test_model(bert, model, x_test, y_test, org_token_labels=[]):
             embeddings = embeddings.to(model_device)
             token_labels, sent_labels, doc_label = tuple(t.to(model_device) for t in labels)
             token_out, sent_out, doc_out = model(embeddings)
+            doc_loss = criterion(doc_out.view(-1), doc_label)
             token_loss = token_criterion(token_out.view(-1, num_token_labels), token_labels.view(-1))
             sent_loss = criterion(sent_out.view(-1), sent_labels)
-            doc_loss = criterion(doc_out.view(-1), doc_label)
-            loss = token_loss + sent_loss + doc_loss
+            loss = doc_loss + token_loss + sent_loss
+
             test_loss += loss.item()
 
             token_labels = token_labels.detach().cpu().numpy()
@@ -194,13 +198,22 @@ def build_scopeit(train_data, dev_data, pretrained_model, n_epochs=10, model_pat
     tokenizer = AutoTokenizer.from_pretrained(pretrained_model)
     bert = AutoModel.from_pretrained(pretrained_model)
 
-    x_train = [prepare_set(d["tokens"]) for d in train_data]
-    x_dev = [prepare_set(d["tokens"]) for d in dev_data]
-    y_train = [prepare_labels(t) for t in train_data]
-    y_dev = [prepare_labels(t) for t in dev_data]
+    x_train = []
+    y_train = []
+    sent_avail = []
+    token_avail = []
+    for d in train_data:
+        x_train.append(prepare_set(d["tokens"]))
+        y_train.append(prepare_labels(d))
+        if not generate_labels_for_neg_docs:
+            sent_avail.append(d["sent"])
+            token_avail.append(d["token"])
 
-    dev_doc_labels = [d["doc_label"] for d in dev_data]
-    dev_sent_labels = [x for d in dev_data for x in d["sent_labels"]]
+    x_dev = []
+    y_dev = []
+    for d in dev_data:
+        x_dev.append(prepare_set(d["tokens"]))
+        y_dev.append(prepare_labels(d))
 
     model = ScopeIt(bert, hidden_size, num_layers=num_layers, num_token_labels=num_token_labels)
     # model.load_state_dict(torch.load(repo_path + "/models/scopeit_" + model_path))
@@ -232,19 +245,20 @@ def build_scopeit(train_data, dev_data, pretrained_model, n_epochs=10, model_pat
     best_score = -1e6
     best_loss = 1e6
 
+    # ipdb.set_trace()
     for epoch in range(n_epochs):
         start_time = time.time()
         train_loss = 0
         model.train()
 
         # shuffle training data
-        train_data = list(zip(x_train, y_train))
+        train_data = list(zip(x_train, y_train, sent_avail, token_avail))
         random.shuffle(train_data)
-        x_train, y_train = zip(*train_data)
+        x_train, y_train, sent_avail, token_avail = zip(*train_data)
         ##
 
         print("Starting Epoch %d"%(epoch+1))
-        for batch, labels in tqdm(zip(x_train, y_train), desc="Iteration"): # in this case each doc is a batch, so there is no constant batchsize
+        for step, (batch, labels) in enumerate(tqdm(zip(x_train, y_train), desc="Iteration")): # each doc is a batch
             b_input_ids, b_input_mask, b_token_type_ids = tuple(t.to(bert_device) for t in batch)
 
             if fine_tune_bert:
@@ -255,10 +269,22 @@ def build_scopeit(train_data, dev_data, pretrained_model, n_epochs=10, model_pat
             token_labels, sent_labels, doc_label = tuple(t.to(model_device) for t in labels)
             embeddings = embeddings.to(model_device)
             token_out, sent_out, doc_out = model(embeddings)
-            token_loss = token_criterion(token_out.view(-1, num_token_labels), token_labels.view(-1))
-            sent_loss = criterion(sent_out.view(-1), sent_labels)
             doc_loss = criterion(doc_out.view(-1), doc_label)
-            loss = token_loss + sent_loss + doc_loss
+            loss = doc_loss
+            if not generate_labels_for_neg_docs:
+                if sent_avail[step]:
+                    sent_loss = criterion(sent_out.view(-1), sent_labels)
+                    loss += sent_loss
+
+                if token_avail[step]:
+                    token_loss = token_criterion(token_out.view(-1, num_token_labels), token_labels.view(-1))
+                    loss += token_loss
+
+            else:
+                token_loss = token_criterion(token_out.view(-1, num_token_labels), token_labels.view(-1))
+                sent_loss = criterion(sent_out.view(-1), sent_labels)
+                loss += token_loss + sent_loss
+
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
@@ -295,7 +321,8 @@ def build_scopeit(train_data, dev_data, pretrained_model, n_epochs=10, model_pat
     return bert, model
 
 if __name__ == '__main__':
-    train = read_file(repo_path + "/data/fixed_train_data.json")
+    train = read_file(repo_path + "/data/fixed_no_gen_train_data.json")
+    # train = read_file(repo_path + "/data/fixed_train_data.json")
     dev = read_file(repo_path + "/data/fixed_dev_data.json")
     # Test file must contain one more column than others, the "old_token_labels" referring to original token_labels before fix_token_labels.py is applied. This is needed in length_fix for testing.
     test = read_file(repo_path + "/data/fixed_test_data.json")
@@ -330,7 +357,7 @@ if __name__ == '__main__':
     original_token_labels = [d["old_token_labels"] for d in test] # Necessary for length fix
 
     if predict:
-        all_token_preds, all_sent_preds, all_doc_preds = predict(bert, model, x_test, y_test, all_mock_org_token_labels=original_token_labels)
+        all_token_preds, all_sent_preds, all_doc_preds = model_predict(bert, model, x_test, y_test, all_mock_org_token_labels=original_token_labels)
         with open(repo_path + "/data/test_with_preds.json", "w", encoding="utf-8") as g:
             for i, t in enumerate(test):
                 t["doc_pred"] = all_doc_preds[i]

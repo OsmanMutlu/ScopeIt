@@ -1,6 +1,7 @@
 from transformers import AutoTokenizer
 import pandas as pd
 import sys
+from itertools import combinations
 import ipdb
 
 input_file = sys.argv[1]
@@ -40,6 +41,32 @@ def labels_to_idxs(labels): # returns empty if empty
 #                 old_token_labels.append(token_labels[i])
 
 #     return new_tokens, new_token_labels, old_token_labels
+
+def to_coref_gold(row):
+    if "token" in row.index and not row.token:
+        return list()
+
+    if len(row.event_clusters) == 0:
+        return list()
+
+    pos_sents = [i for i,v in enumerate(row.sent_labels) if v == 1] # sorted
+    if len(pos_sents) == 1:
+        return list()
+
+    sent_to_order = {}
+    for i,v in enumerate(pos_sents):
+        sent_to_order[v] = i
+
+    coref_gold =  [[0 if i != j else -1 for j in range(len(pos_sents))] for i in range(len(pos_sents))] # -1 for diagonals, we ignore these in loss
+    for v in row.event_clusters.values():
+        for i,j in list(combinations(v,2)): # for each pair
+            first_sent = sent_to_order[i-1] # idxs start from 1
+            second_sent = sent_to_order[j-1] # idxs start from 1
+
+            coref_gold[first_sent][second_sent] = 1
+            coref_gold[second_sent][first_sent] = 1 # symmetric
+
+    return coref_gold
 
 def get_tokenized(tokenizer, row, no_gen=False):
     do_labels = False
@@ -83,11 +110,17 @@ def remove_empty_sentences(row):
                 row.token_labels.pop(i)
                 row.old_token_labels.pop(i) # Necessary for length fix in test
 
+            if len(row.event_clusters) != 0:
+                new_clusters = {}
+                for k,v in row.event_clusters.items():
+                    new_clusters[k] = [idx-1 if idx >= i else idx for idx in v]
+
+                row.event_clusters = new_clusters
+
             if row.sentences:
                 row.sentences.pop(i)
                 row.sent_labels.pop(i)
-            # row.semantic_labels.pop(i) # Make sure length of these match the length of sentences
-            # TODO : Remove this sentence from coreference data
+                # row.semantic_labels.pop(i) # TODO : Make sure length of these match the length of sentences
 
     return row
 
@@ -108,6 +141,9 @@ df["old_token_labels"] = r.apply(lambda x: x[2])
 
 # We need this part since the tokenizer may return an empty list for a sentence. For example a sentence just contains "\222\222", then it would be empty after tokenized.
 df = df.apply(remove_empty_sentences, axis=1)
+
+# Coreference gold data
+df["coref_gold"] = df.apply(to_coref_gold, axis=1)
 
 df.to_json("fixed_" + input_file, orient="records", lines=True, force_ascii=False)
 # NOTE : In train.py these will be fed into batch_encode_plus function with is_pretokenized option as True, so that our tokens and token_labels match!

@@ -1,6 +1,7 @@
 from torch import nn
 import torch.nn.functional as F
 import torch
+# import ipdb
 
 # this implementation separates scopeit model from the embedder (bert).
 # We are doing this to avoid using torch.nn.dataparallel since it has some problems.
@@ -28,6 +29,9 @@ class ScopeIt(nn.Module):
         self.doc_boomer = Boom(hidden_size, dim_feedforward=hidden_size*4, dropout=dropout, shortcut=True)
         self.doc_linear = nn.Linear(self.hidden_size, 1)
 
+        self.coref_head = CorefHead(hidden_size) # aftergru1
+        # self.coref_head = CorefHead(hidden_size * 2) # aftergru2
+
     def forward(self, embeddings): # embeddings ->[Sentences, SeqLen, BERT_Hidden]
 
         # In case we use the biGRU's output for token classification
@@ -51,13 +55,15 @@ class ScopeIt(nn.Module):
 
         doc_embeddings = bigru2_output[1][0, :, :] + bigru2_output[1][1, :, :] # here we add the output of two GRUs (forward and backward)
         boomed_doc = self.doc_boomer(doc_embeddings)
-        # boomed_sents -> [1, HiddenSize]
+        # boomed_doc -> [1, HiddenSize]
 
-        # final output -> [Sentences, logit]
         sent_logits = self.sent_linear(boomed_sents).squeeze(0)
         doc_logit = self.doc_linear(boomed_doc)
 
-        return token_logits, sent_logits, doc_logit
+        coref_logits = self.coref_head(sent_embeddings) # aftergru1
+        # coref_logits = self.coref_head(bigru2_output[0].squeeze(0)) # aftergru2
+
+        return token_logits, sent_logits, doc_logit, coref_logits
 
 
 class Boom(nn.Module):
@@ -86,3 +92,28 @@ class Boom(nn.Module):
             z = self.linear2(x)
 
         return z
+
+class CorefHead(nn.Module):
+    def __init__(self, d_model):
+        super(CorefHead, self).__init__()
+        self.coref_mlp1 = Boom(d_model, dim_feedforward=d_model*4, dropout=dropout, shortcut=True)
+        self.coref_mlp2 = Boom(d_model, dim_feedforward=d_model*4, dropout=dropout, shortcut=True)
+        self.biaffine = BiAffine(d_model)
+
+    def forward(self, x):
+        mlp1_out = self.coref_mlp1(x) # [Sentences, HiddenSize]
+        mlp2_out = self.coref_mlp2(x) # [Sentences, HiddenSize]
+        coref_logits = self.biaffine(mlp1_out, mlp2_out) # [Sentences, Sentences]
+
+        return coref_logits
+
+# No need for an extra output dimension
+class BiAffine(nn.Module):
+    def __init__(self, d_model):
+        super(BiAffine, self).__init__()
+        self.U = nn.Parameter(torch.FloatTensor(d_model, d_model))
+        nn.init.xavier_uniform(self.U)
+
+    def forward(self, a, b):
+        out = a @ self.U @ b.transpose(0,1)
+        return out

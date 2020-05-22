@@ -29,9 +29,6 @@ class ScopeIt(nn.Module):
         self.doc_boomer = Boom(hidden_size, dim_feedforward=hidden_size*4, dropout=dropout, shortcut=True)
         self.doc_linear = nn.Linear(self.hidden_size, 1)
 
-        self.coref_head = CorefHead(hidden_size) # aftergru1
-        # self.coref_head = CorefHead(hidden_size * 2) # aftergru2
-
     def forward(self, embeddings): # embeddings ->[Sentences, SeqLen, BERT_Hidden]
 
         # In case we use the biGRU's output for token classification
@@ -60,10 +57,8 @@ class ScopeIt(nn.Module):
         sent_logits = self.sent_linear(boomed_sents).squeeze(0)
         doc_logit = self.doc_linear(boomed_doc)
 
-        coref_logits = self.coref_head(sent_embeddings) # aftergru1
-        # coref_logits = self.coref_head(bigru2_output[0].squeeze(0)) # aftergru2
-
-        return token_logits, sent_logits, doc_logit, coref_logits
+        return token_logits, sent_logits, doc_logit, sent_embeddings # aftergru1
+        # return token_logits, sent_logits, doc_logit, bigru2_output[0].squeeze(0) # aftergru2
 
 
 class Boom(nn.Module):
@@ -94,10 +89,10 @@ class Boom(nn.Module):
         return z
 
 class CorefHead(nn.Module):
-    def __init__(self, d_model):
+    def __init__(self, d_model, dropout=0.1, shortcut=True):
         super(CorefHead, self).__init__()
-        self.coref_mlp1 = Boom(d_model, dim_feedforward=d_model*4, dropout=dropout, shortcut=True)
-        self.coref_mlp2 = Boom(d_model, dim_feedforward=d_model*4, dropout=dropout, shortcut=True)
+        self.coref_mlp1 = Boom(d_model, dim_feedforward=d_model*4, dropout=dropout, shortcut=shortcut)
+        self.coref_mlp2 = Boom(d_model, dim_feedforward=d_model*4, dropout=dropout, shortcut=shortcut)
         self.biaffine = BiAffine(d_model)
 
     def forward(self, x):

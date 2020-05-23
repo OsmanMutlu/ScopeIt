@@ -57,8 +57,9 @@ class ScopeIt(nn.Module):
         sent_logits = self.sent_linear(boomed_sents).squeeze(0)
         doc_logit = self.doc_linear(boomed_doc)
 
-        return token_logits, sent_logits, doc_logit, sent_embeddings # aftergru1
-        # return token_logits, sent_logits, doc_logit, bigru2_output[0].squeeze(0) # aftergru2
+        return token_logits, sent_logits, doc_logit # multi-task model training
+        # return token_logits, sent_logits, doc_logit, sent_embeddings # coref_head_training aftergru1
+        # return token_logits, sent_logits, doc_logit, bigru2_output[0].squeeze(0) # coref_head_training aftergru2
 
 
 class Boom(nn.Module):

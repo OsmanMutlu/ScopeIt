@@ -11,6 +11,7 @@ from conlleval import evaluate2
 from tqdm import tqdm
 import json
 from itertools import combinations
+import sys
 # import ipdb
 
 use_gpu = True
@@ -26,19 +27,22 @@ is_pretokenized = True # True when training with token level data
 num_token_labels = 15
 repo_path = "/home/omutlu/ScopeIt"
 num_epochs = 30
-only_test = True
+only_test = False
 predict = False
 
 # For model path name
 generate_labels_for_neg_docs = False
-number_of_mlps = 2
+number_of_mlps = 1
 aftergru = 1
+
 do_rescoring = False # Doesn't matter in training
 
-frozen_model_path = "128_2_512_200_0.0001_False.pt"
+# Whether or not to take loss from coref gold matrix's lower part, since it is symmetrical to the upper side. Also in evaluation we only use upper part of the matrix, since the positive ids are ordered.
+ignore_lower_part = False
+add_reg_loss = True
+mlp_shortcut = False
 
-# TODO : Maybe don't take loss from coref gold matrix's upper part, since it is symmetrical to the lower side. If we do this, we need to do a similar thing in evaluation
-# TODO : Freeze already trained "coref-less" multi-task model, than train coref head with token level train data.
+frozen_model_path = "128_2_512_200_0.0001_False.pt"
 
 # Parameters of the clustering algorithm,
 threshold = 0.5
@@ -48,12 +52,6 @@ clustering_threshold = 0.5
 device_ids = [0, 1, 2, 3, 4, 5, 6, 7]
 
 criterion = torch.nn.BCEWithLogitsLoss()
-token_criterion = torch.nn.CrossEntropyLoss(ignore_index=-1)
-
-label_list = ["B-etime", "B-fname", "B-organizer", "B-participant", "B-place", "B-target", "B-trigger", "I-etime", "I-fname", "I-organizer", "I-participant", "I-place", "I-target", "I-trigger", "O"]
-idtolabel = {}
-for i,lab in enumerate(label_list):
-    idtolabel[i] = lab
 
 if use_gpu and torch.cuda.is_available():
     bert_device = torch.device("cuda:%d"%(device_ids[2]))
@@ -83,6 +81,13 @@ def prepare_set(texts, max_length=max_length):
 
     return t["input_ids"], t["attention_mask"], t["token_type_ids"]
 
+def asymmetryness(A, eps=1e-7):
+    As = (A + A.T)/2 + eps # to ensure there is no 0/0 division
+    Aa = (A - A.T)/2
+    out = torch.sum(torch.abs(Aa/As))
+    out = out / ((np.prod(A.shape) - len(A)) / 2)
+    return out
+
 def cluster_to_relations(cluster, pos_idxs):
     ids = list(combinations(sorted(pos_idxs), 2))
     pairs = {}
@@ -111,6 +116,7 @@ def to_cluster_gold(clusters):
     return gold
 
 def clustering_algo(coref_out, pos_idxs, rescoring=False):
+    # NOTE : pos_idxs are always ordered, so each tuple in ids are always ordered, soo we only use the upper part of the score matrix when deciding labels.
     ids = list(combinations(pos_idxs, 2))
     pos_id_to_order = {}
     for i, idx in enumerate(pos_idxs):
@@ -129,9 +135,16 @@ def clustering_algo(coref_out, pos_idxs, rescoring=False):
                 if s1 == s or s2 == s:
                     continue
 
-                # if s > s1 then symmetry is lost
-                s1_s_label = coref_out[pos_id_to_order[s1],pos_id_to_order[s]]
-                s2_s_label = coref_out[pos_id_to_order[s2],pos_id_to_order[s]]
+                # When we train and use only the upper part of the matrix, we need to order these
+                if ignore_lower_part:
+                    s1s = sorted([s1,s])
+                    s2s = sorted([s2,s])
+                    s1_s_label = coref_out[pos_id_to_order[s1s[0]],pos_id_to_order[s1s[1]]]
+                    s2_s_label = coref_out[pos_id_to_order[s2s[0]],pos_id_to_order[s2s[1]]]
+                else:
+                    s1_s_label = coref_out[pos_id_to_order[s1],pos_id_to_order[s]]
+                    s2_s_label = coref_out[pos_id_to_order[s2],pos_id_to_order[s]]
+
                 if  s1_s_label == 1 and s2_s_label == 1:
                     pairs[(s1,s2)] += reward
                 elif s1_s_label != s2_s_label:
@@ -176,6 +189,10 @@ def prepare_labels(json_data, max_length=max_length, only_token=False, truncate=
     sent_labels = np.array(sent_labels)
 
     coref_gold = torch.FloatTensor(json_data["coref_gold"]) # Pos_sentsxPos_sents
+    if ignore_lower_part:
+        ignored_idxs = torch.tril_indices(*coref_gold.shape, -1) # offset is -1 since diagonal is already ignored.
+        coref_gold[ignored_idxs[0],ignored_idxs[1]] = -1
+
     if truncate and len(coref_gold) != 0 and len(sent_labels) > batch_size:
         pos_idxs_over_limit = [i for i,v in enumerate(sent_labels.tolist()) if v == 1 and i >= batch_size]
         if pos_idxs_over_limit: # since we will be discarding these sentences from input, we remove them from here as well
@@ -273,7 +290,7 @@ def build_scopeit(train_data, dev_data, pretrained_model, n_epochs=10, model_pat
     bert.load_state_dict(torch.load(repo_path + "/models/bert_" + frozen_model_path))
     bert.to(bert_device)
 
-    coref_head = CorefHead(hidden_size * aftergru)
+    coref_head = CorefHead(hidden_size * aftergru, shortcut=mlp_shortcut)
     coref_head.to(coref_head_device)
 
     np.random.seed(seed)
@@ -303,7 +320,7 @@ def build_scopeit(train_data, dev_data, pretrained_model, n_epochs=10, model_pat
         print("Starting Epoch %d"%(epoch+1))
         for step, (batch, labels) in enumerate(tqdm(zip(x_train, y_train), desc="Iteration")): # each doc is a batch
             b_input_ids, b_input_mask, b_token_type_ids = tuple(t.to(bert_device) for t in batch)
-            
+
             with torch.no_grad():
                 embeddings = bert(b_input_ids, attention_mask=b_input_mask, token_type_ids=b_token_type_ids)[0].detach()
                 embeddings = embeddings.to(model_device)
@@ -322,6 +339,14 @@ def build_scopeit(train_data, dev_data, pretrained_model, n_epochs=10, model_pat
             fixed_coref_out = fixed_coref_out[coref_gold != -1]
             coref_gold = coref_gold[coref_gold != -1]
             loss = criterion(fixed_coref_out, coref_gold)
+            if add_reg_loss:
+                if ignore_lower_part:
+                    print("The add_reg_loss and ignore_lower_part options cannot be True at the same time!")
+                    sys.exit(0)
+
+                reg_loss = asymmetryness(fixed_coref_out)
+                if reg_loss > 0: # If it is indeed symmetric, then it will be negative
+                    loss += reg_loss
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(coref_head.parameters(), 1.0)
@@ -353,14 +378,14 @@ if __name__ == '__main__':
     # train = read_file(repo_path + "/data/fixed_train_data.json")
     dev = read_file(repo_path + "/data/fixed_dev_data.json")
     # Test file must contain one more column than others, the "old_token_labels" referring to original token_labels before fix_token_labels.py is applied. This is needed in length_fix for testing.
-    # test = read_file(repo_path + "/data/fixed_test_data.json")
-    test = read_file(repo_path + "/data/fixed_pipeline_review_data_only_pos.json")
+    test = read_file(repo_path + "/data/fixed_test_data.json")
+    # test = read_file(repo_path + "/data/fixed_pipeline_review_data_only_pos.json")
     # test = read_file(repo_path + "/data/fixed_pipeline_review_data.json")
 
     # TODO : print parameters here
     print("max batch size (max sentences in doc): ", batch_size)
 
-    model_path = str(max_length) + "_" + str(num_layers) + "_" + str(hidden_size) + "_" + str(batch_size) + "_" + str(lr) + "_" + str(generate_labels_for_neg_docs) + "_coref_" + str(number_of_mlps) + "mlp_aftergru" + str(aftergru) + ".pt"
+    model_path = str(max_length) + "_" + str(num_layers) + "_" + str(hidden_size) + "_" + str(batch_size) + "_" + str(lr) + "_" + str(generate_labels_for_neg_docs) + "_coref_" + str(number_of_mlps) + "mlp_aftergru" + str(aftergru) + "_symmetric.pt"
     if not only_test:
         bert, model, coref_head = build_scopeit(train, dev, "bert-base-uncased", n_epochs=num_epochs, model_path=model_path)
     else:
@@ -370,7 +395,7 @@ if __name__ == '__main__':
         if torch.cuda.device_count() > 1 and bert_device.type == "cuda":
             bert = nn.DataParallel(bert, device_ids=device_ids[2:])
 
-        coref_head = CorefHead(hidden_size * aftergru)
+        coref_head = CorefHead(hidden_size * aftergru, shortcut=mlp_shortcut)
 
     model.load_state_dict(torch.load(repo_path + "/models/scopeit_" + frozen_model_path))
     model.to(model_device)

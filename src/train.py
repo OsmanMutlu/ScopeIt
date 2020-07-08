@@ -11,6 +11,7 @@ from conlleval import evaluate2
 from tqdm import tqdm
 import json
 # import ipdb
+import sys
 
 use_gpu = True
 seed = 1234
@@ -25,11 +26,13 @@ is_pretokenized = True # True when training with token level data
 num_token_labels = 15
 generate_labels_for_neg_docs = False
 repo_path = "/home/omutlu/ScopeIt"
-num_epochs = 15
+num_epochs = 30
 only_test = False
 predict = False
 
-device_ids = [0, 1, 2, 3, 4, 5, 6, 7] if fine_tune_bert else [0, 1, 2, 3, 4]
+token_level_subset = int(sys.argv[1]) # default is None
+
+device_ids = [0, 1, 2, 3, 4, 5, 6] if fine_tune_bert else [0, 1, 2, 3, 4]
 # device_ids = [4, 5, 6, 7] if fine_tune_bert else [0, 1, 2, 3, 4]
 
 criterion = torch.nn.BCEWithLogitsLoss()
@@ -250,7 +253,7 @@ def build_scopeit(train_data, dev_data, pretrained_model, n_epochs=10, model_pat
                                             num_warmup_steps = 0,
                                             num_training_steps = total_steps)
     ###
-    
+
     bert.zero_grad()
     model.zero_grad()
     best_score = -1e6
@@ -332,18 +335,22 @@ def build_scopeit(train_data, dev_data, pretrained_model, n_epochs=10, model_pat
     return bert, model
 
 if __name__ == '__main__':
-    train = read_file(repo_path + "/data/fixed_no_gen_train_data.json")
+    train = read_file(repo_path + "/data/fixed_no_gen_train_data.json", token_level_subset=token_level_subset)
+    # train = read_file(repo_path + "/data/fixed_no_gen_train_data_no_partial_data.json", token_level_subset=token_level_subset)
     # train = read_file(repo_path + "/data/fixed_train_data.json")
     dev = read_file(repo_path + "/data/fixed_dev_data.json")
     # Test file must contain one more column than others, the "old_token_labels" referring to original token_labels before fix_token_labels.py is applied. This is needed in length_fix for testing.
-    test = read_file(repo_path + "/data/fixed_test_data.json")
-    # test = read_file(repo_path + "/data/fixed_pipeline_review_data_only_pos.json")
+    # test = read_file(repo_path + "/data/fixed_test_data.json")
+    test = read_file(repo_path + "/data/fixed_pipeline_review_data_only_pos.json")
     # test = read_file(repo_path + "/data/fixed_pipeline_review_data.json")
 
+    print(len([d for d in train if d["token"]]))
     # TODO : print parameters here
     print("max batch size (max sentences in doc): ", batch_size)
 
-    model_path = str(max_length) + "_" + str(num_layers) + "_" + str(hidden_size) + "_" + str(batch_size) + "_" + str(lr) + "_" + str(generate_labels_for_neg_docs) + ".pt"
+    # model_path = "fixed_" + str(max_length) + "_" + str(num_layers) + "_" + str(hidden_size) + "_" + str(batch_size) + "_" + str(lr) + "_" + str(generate_labels_for_neg_docs) + "_subset" + str(token_level_subset) + ".pt"
+    # model_path = "model_no_partial_data_subset" + str(token_level_subset) + ".pt"
+    model_path = "model_partial_data_subset" + str(token_level_subset) + ".pt"
     if not only_test:
         bert, model = build_scopeit(train, dev, "bert-base-uncased", n_epochs=num_epochs, model_path=model_path)
     else:

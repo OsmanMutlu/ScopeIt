@@ -1,8 +1,11 @@
 import json
 
-def read_file(file_name):
+def read_file(file_name, token_level_subset=None):
     with open(file_name, "r") as fi:
         docs = [ json.loads(l) for l in fi ]
+
+    if token_level_subset != None:
+        return [d for d in docs if not d["token"]] + [d for d in docs if d["token"]][:token_level_subset]
 
     return docs
 

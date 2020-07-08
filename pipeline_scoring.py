@@ -8,7 +8,7 @@ idtolabel = {}
 for i,lab in enumerate(label_list):
     idtolabel[i] = lab
 
-df = pd.read_json("data/pipeline_review_with_preds.json", orient="records", lines=True)
+df = pd.read_json("data/test_with_preds.json", orient="records", lines=True)
 
 doc_labels = df.doc_label
 doc_preds = df.doc_pred

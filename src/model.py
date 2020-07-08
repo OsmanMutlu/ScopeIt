@@ -93,13 +93,13 @@ class CorefHead(nn.Module):
     def __init__(self, d_model, dropout=0.1, shortcut=True):
         super(CorefHead, self).__init__()
         self.coref_mlp1 = Boom(d_model, dim_feedforward=d_model*4, dropout=dropout, shortcut=shortcut)
-        self.coref_mlp2 = Boom(d_model, dim_feedforward=d_model*4, dropout=dropout, shortcut=shortcut)
+        # self.coref_mlp2 = Boom(d_model, dim_feedforward=d_model*4, dropout=dropout, shortcut=shortcut)
         self.biaffine = BiAffine(d_model)
 
     def forward(self, x):
         mlp1_out = self.coref_mlp1(x) # [Sentences, HiddenSize]
-        mlp2_out = self.coref_mlp2(x) # [Sentences, HiddenSize]
-        coref_logits = self.biaffine(mlp1_out, mlp2_out) # [Sentences, Sentences]
+        # mlp2_out = self.coref_mlp2(x) # [Sentences, HiddenSize]
+        coref_logits = self.biaffine(mlp1_out, mlp1_out) # [Sentences, Sentences]
 
         return coref_logits
 
